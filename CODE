@@ -1,0 +1,216 @@
+globals [value]
+breed [teams team]
+teams-own [
+  state                   ;; current state: "Working" or "Idle"
+  resource-1 resource-2    ;; the resources on agents' right and left
+  total-used             ;; how much agents have used the resources
+  effort
+]
+breed [resources resource]
+resources-own [
+  home-xpos home-ypos home-heading     ;; placing the resources
+  owner                                ;; the agent that currently owns the resource (if any)
+  marked?                              ;; If someone owns the resource, mark as true/false
+]
+
+to setup
+  clear-all
+  ;; set up the model
+  make-turtles
+  recolor
+  reset-ticks
+end
+
+;; creation of agents
+to make-turtles
+  set-default-shape teams "person"
+  set-default-shape resources "x"
+  ;; Creating an ordered team in who number order
+  create-ordered-teams num-teams [
+    set size 0.2
+    jump 1.5
+    set state "IDLE"  ;; Initially every agent has an Idle state
+
+  ]
+  create-ordered-resources num-teams [
+    rt 180 / num-teams    ;; setting the agents in a circle to work in iterations
+    jump 1                  ; moving forward at the same time
+    rt 360
+    set size 0.05
+    set marked? false        ;; Initialising the marked var to be false in the start (No one has the resource yet)
+    set owner nobody
+    ;; save the position and heading, so the teams can replace resource later
+    set home-xpos xcor        ; Setting resources on (0,0)
+    set home-ypos ycor
+    set home-heading heading
+    ;set effort 0
+  ]
+  ;; To assign resources to the agents
+  ask teams [
+    set resource-1 resource (who + num-teams)
+    ifelse who = 0
+      [ set resource-2 resource (2 * num-teams - 1) ]
+      [ set resource-2 resource (who + num-teams - 1) ]
+  ]
+  ask one-of resources [ set marked? true ]      ;; Marking the resource
+end
+
+to go
+  ask one-of teams [ update ]
+  recolor
+  tick
+end
+;; Assiging colours according to state
+to recolor
+  ask teams [
+    if state = "WORKING"
+      [ set color blue ]
+    if state = "IDLE"
+        [ set color red ]
+
+    ]
+
+  ask resources [
+    ;; marked resources are shown only if crysfall model is true
+    ifelse crysfall? and marked?
+      [ set color magenta ]
+      [ set color white ]
+  ]
+end
+to improve
+  ifelse crysfall?
+  [ask one-of teams [ set color green ]]
+  [set color white]
+end
+;; Agents working in a cyclic delivery phase.
+to update  ;; agent procedure
+  if state = "IDLE" [
+    if random-float 1.0 < success-chance [
+      set state "WORKING"
+    ]
+    stop
+  ]
+  if state = "WORKING" [
+    ;; keep track of how much we're working.
+     set total-used (total-used + 1)
+    if random-float 1.0 < failure-chance [
+      ;; put down resourcess
+      ifelse crysfall?
+        [ release-resources-crysfall  ]
+        [ release-resources-waterfall ]
+   ;; Calculate effort
+    set effort ( total-used + 0.01 * ( 1 / total-used) )
+    set value (value +  effort )
+      ;; continue idle
+      set state "IDLE"
+    ]
+    stop
+  ]
+  if state = "IDLE" [
+    ; try to pick up the resources.
+    ifelse crysfall?
+      [ acquire-resources-crysfall ]     ; If crysfall ON, acquire these resources intelligently
+      [ acquire-resources-waterfall ]
+
+   ; If crysfall OFF, acquire these resources idly
+    ; if we've got both resources, work.
+
+    stop
+ ]
+end
+
+;; just drop the resources.
+to release-resources-waterfall  ;; teams procedure
+  release resource-1
+  release resource-2
+  set state "IDLE"
+end
+
+;; crysfall strategy for releasing the resources, which switches any
+;; marks to the other resource.
+to release-resources-crysfall  ;; resource procedure
+  ;; check resource 1 on the left
+  ifelse [marked?] of resource-1 [
+    ask resource-1 [ set marked? false ]
+    ask resource-2 [ set marked? true ]
+  ;  if got? resource-1 or got? resource-2
+  ;  [ set state "WORKING" ]
+  ]
+  [
+    ;; otherwise, check resource 2 on the right
+    if [marked?] of resource-2 [
+      ask resource-2 [ set marked? false ]
+      ask resource-1 [ set marked? true ]
+   ;   if got? resource-1 or got? resource-2
+   ;   [ set state "WORKING" ]
+    ]
+  ]
+  ;; release the resources.
+  release resource-1
+  release resource-2
+end
+
+;; to release a resource, we set its owner to nobody and replace it
+to release [the-resource]  ;; agent procedure
+  ask the-resource [
+    if owner != nobody [
+      set owner nobody
+      setxy home-xpos home-ypos
+      set heading home-heading
+    ]
+  ]
+end
+
+;; Pick each resource up. if agent gets only one, hold it
+;; until agent gets the other one.
+to acquire-resources-waterfall  ;; agent procedure
+  if [owner] of resource-1 = nobody
+    [ acquire-1 ]
+  if [owner] of resource-2 = nobody
+    [ acquire-2 ]
+   if got? resource-1 and got? resource-2
+     [ set state "WORKING" ]
+   
+
+end
+
+;; crysfall strategy for acquiring the resources.
+to acquire-resources-crysfall  ;; agent procedure
+  if [owner] of resource-1 = nobody [
+    if ([not marked?] of resource-1) or got? resource-2
+      [ acquire-1 ]
+  ]
+  if [owner] of resource-2 = nobody [
+    if ([not marked?] of resource-2) or got? resource-1
+      [ acquire-2 ]
+  ]
+   if got? resource-1 or got? resource-2
+    [ set state "WORKING" ]
+end
+
+;; Get first resource and set owner
+to acquire-1  ;; agent procedure
+  ask resource-1 [
+    set owner myself
+    move-to owner
+    set heading [heading] of owner
+    rt 8  fd 0.1
+  ]
+end
+
+;; Get second resource and designate owner
+to acquire-2  ;; agent procedure
+  ask resource-2 [
+    set owner myself
+    move-to owner
+    set heading [heading] of owner
+    lt 8  fd 0.1
+  ]
+end
+
+;; Check resource owner
+to-report got? [the-resource]  ;; agent procedure
+  report self = [owner] of the-resource
+end
+
+;; This model is inspired by the Dining Philosophers in Models library of NetLogo 
